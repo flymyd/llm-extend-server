@@ -1,5 +1,6 @@
 // server.js
 
+import 'dotenv/config';
 import express from 'express';
 import { AgentExecutor } from './src/agentExecutor.js';
 import { createOpenAIStreamChunk, createFinalStreamChunk, STREAM_DONE_CHUNK } from './src/streamUtils.js';
@@ -12,6 +13,7 @@ const PORT = process.env.LLM_EXTEND_SERVE_PORT || 12566;
 const REMOTE_LLM_ENDPOINT = process.env.LLM_EXTEND_REMOTE_ENDPOINT || "http://xxx.com/v1";
 const API_KEY = process.env.LLM_EXTEND_REMOTE_API_KEY || "sk-114514";
 const REMOTE_LLM_ID = process.env.LLM_EXTEND_REMOTE_LLM_ID || "Qwen3-235B-A22B-AWQ";
+console.log(PORT, REMOTE_LLM_ENDPOINT, API_KEY, REMOTE_LLM_ID);
 
 if (!API_KEY) {
     throw new Error("请设置环境变量 LLM_EXTEND_ORIGIN_API_KEY");
@@ -110,5 +112,4 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`🚀 MCP Proxy Server is running on http://localhost:${PORT}`);
-    console.log("Your robot should now point to: http://localhost:3000/v1/chat/completions");
 });

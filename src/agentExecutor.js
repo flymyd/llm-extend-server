@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { getTool, getAllToolSchemas } from './tool.js';
-import { buildReactPrompt } from './prompts.js';
+import { buildToolUseInstructions } from './prompts.js';
 
 const MAX_LOOPS = 7;
 
@@ -10,12 +10,19 @@ export class AgentExecutor {
     }
 
     _parseOutput(text) {
-        if (text.includes("Final Answer:")) {
-            return { finalAnswer: text.split("Final Answer:")[1].trim() };
+        if (!text.includes("<tool_code>")) {
+            return { finalAnswer: text };
         }
         
-        const actionMatch = text.match(/Action:\s*(\w+)/);
-        const actionInputMatch = text.match(/Action Input:\s*(\{.*\})/s);
+        const toolCodeMatch = text.match(/<tool_code>([\s\S]*?)<\/tool_code>/);
+        if (!toolCodeMatch) {
+            return { finalAnswer: text }; // No tool code found, treat as final answer
+        }
+
+        const toolCodeBlock = toolCodeMatch[1];
+
+        const actionMatch = toolCodeBlock.match(/Action:\s*(\w+)/);
+        const actionInputMatch = toolCodeBlock.match(/Action Input:\s*(\{.*\})/s);
 
         if (actionMatch && actionInputMatch) {
             return {
@@ -23,43 +30,51 @@ export class AgentExecutor {
                 actionInput: actionInputMatch[1].trim(),
             };
         }
-        return { error: "无法解析模型输出，格式不符合预期。" };
+        return { error: "无法解析模型输出，<tool_code> 格式不符合预期。" };
     }
 
     async run({ model, messages }) {
-        const MAX_LOOPS = 7; 
-
         console.log("[Agent] Starting new execution with full message history:");
         console.dir(messages, { depth: null });
-        const latestMessage = messages[messages.length - 1];
-        if (!latestMessage || latestMessage.role !== 'user') {
-            console.log("[Agent] Last message is not from user. Aborting.");
-            return "我需要一个明确的用户问题才能开始工作。";
-        }
-        const userQuestion = latestMessage.content;
-        const toolSchemas = getAllToolSchemas();
-        const chatHistory = messages.slice(0, -1);
-        const systemPrompt = buildReactPrompt(toolSchemas, chatHistory);
         
-        // 3. 构造 Agent 的初始工作记忆
-        const agentHistory = [
-            { role: "system", content: systemPrompt },
-            // 将最新的用户问题作为 Agent 的第一个任务，并用 "Question:" 标签明确标识
-            { role: "user", content: `Question: ${userQuestion}` },
-        ];
+        // 1. 构建工具使用指南
+        const toolSchemas = getAllToolSchemas();
+        const toolInstructions = buildToolUseInstructions(toolSchemas);
+
+        // 2. 将指南附加到 System Prompt
+        const processedMessages = [...messages];
+        const systemMessageIndex = processedMessages.findIndex(m => m.role === 'system');
+        
+        if (systemMessageIndex !== -1) {
+            processedMessages[systemMessageIndex].content += `\n\n${toolInstructions}`;
+        } else {
+            // 如果没有 system message, 就插入一个
+            processedMessages.unshift({ role: "system", content: toolInstructions });
+        }
+        
+        // Agent 的工作记忆就是处理过的消息历史
+        const agentHistory = processedMessages;
 
         for (let i = 0; i < MAX_LOOPS; i++) {
             console.log(`\n[Agent] Loop ${i + 1}`);
+            console.log("[Agent] Current history being sent to LLM:");
+            console.dir(agentHistory, { depth: null });
+
             const response = await this.openai.chat.completions.create({
                 model,
                 messages: agentHistory,
                 temperature: 0,
-                stop: ["\nObservation:"],
+                stop: ["\nObservation:", "</tool_code>"],
             });
 
             const outputText = response.choices[0].message.content;
-            console.log("[Agent] LLM Output:\n", outputText);
-            const parsed = this._parseOutput(outputText);
+            console.log("[Agent] LLM Raw Output:\n", outputText);
+            
+            // 需要在解析前，如果模型输出了停止符，把结尾补全，以便XML解析正确
+            const fullOutput = outputText.includes("Action:") ? outputText + "</tool_code>" : outputText;
+            console.log("[Agent] Full constructed output for parsing:\n", fullOutput);
+
+            const parsed = this._parseOutput(fullOutput);
             if (parsed.finalAnswer) {
                 console.log("[Agent] Found Final Answer:", parsed.finalAnswer);
                 return parsed.finalAnswer;
@@ -88,7 +103,7 @@ export class AgentExecutor {
             console.log("[Agent] Observation:", observation);
             
             // 7. 更新 Agent 的工作记忆，准备下一次循环
-            agentHistory.push({ role: "assistant", content: outputText });
+            agentHistory.push({ role: "assistant", content: fullOutput });
             agentHistory.push({ role: "user", content: `Observation: ${observation}` });
         }
 
