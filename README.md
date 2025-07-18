@@ -25,8 +25,8 @@ MCP代理服务器是一个为 [chatluna-character](https://github.com/ChatLunaL
 
 1. **克隆项目**
    ```bash
-   git clone <repository-url>
-   cd mcp-proxy-server
+   git clone https://github.com/flymyd/mcp-extend-server.git
+   cd mcp-extend-server
    ```
 
 2. **安装依赖**
